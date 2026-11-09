@@ -1,0 +1,126 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The plugins, Windows x86 and x64.
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        preset: [windows-x86, windows-x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The presets take vcpkg from VCPKG_ROOT; the runner ships a clone. The
+      # overlay triplets in triplets/ pin the v143 toolset the presets use.
+      - name: Locate vcpkg
+        shell: pwsh
+        run: '"VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append'
+
+      # The Interposer's CMake requires YY-Thunks to configure, even though the
+      # plugin does not link it.
+      - name: Fetch YY-Thunks
+        shell: pwsh
+        working-directory: external/LANCommander.Interposer
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/Get-YYThunks.ps1
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --preset ${{ matrix.preset }}
+          cmake --build --preset ${{ matrix.preset }}-release
+
+      - name: Test
+        shell: pwsh
+        run: ctest --preset ${{ matrix.preset }}-release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.preset }}
+          path: out/${{ matrix.preset }}/bin/Release/lancommander_qmm_*.dll
+
+  # The plugins, Linux x86 and x64, in the Interposer's build image (Debian 12,
+  # multilib), so they run on the glibc of LANCommander's server images.
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        preset: [linux-x86, linux-x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build image
+        run: docker build -f external/LANCommander.Interposer/docker/build.Dockerfile -t build external/LANCommander.Interposer/docker
+
+      - name: Build and test
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src build sh -c '
+            cmake --preset ${{ matrix.preset }} &&
+            cmake --build --preset ${{ matrix.preset }}-release &&
+            ctest --preset ${{ matrix.preset }}-release'
+
+      # Only QMM_* and the Interposer's API may be exported (src/plugin/exports.map).
+      - name: Check exports
+        run: |
+          status=0
+          for so in out/${{ matrix.preset }}/bin/Release/lancommander_qmm_*.so; do
+            unexpected=$(nm -D --defined-only "$so" | awk '{print $3}' |
+              grep -vE '^(QMM_.*|Interposer.*|interposer_comms_.*)$' || true)
+            if [ -n "$unexpected" ]; then echo "$so exports:"; echo "$unexpected"; status=1; fi
+          done
+          exit $status
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.preset }}
+          path: out/${{ matrix.preset }}/bin/Release/lancommander_qmm_*.so
+
+  # The log formats the plugin parses, against the games' released code.
+  formats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the game sources
+        run: bash tests/tools/fetch_sources.sh
+
+      - name: Check
+        run: python3 -I tests/tools/check_formats.py
+
+  package:
+    needs: [windows, linux, formats]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the release, on a v* tag
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package
+        run: bash scripts/package.sh artifacts package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANCommander.QMM.MatchStatistics
+          path: package/
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          (cd package && zip -r "../LANCommander.QMM.MatchStatistics-${GITHUB_REF_NAME}.zip" .)
+          gh release create "$GITHUB_REF_NAME" "LANCommander.QMM.MatchStatistics-${GITHUB_REF_NAME}.zip" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

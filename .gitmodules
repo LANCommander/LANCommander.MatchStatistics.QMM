@@ -1,0 +1,9 @@
+[submodule "external/qmm2"]
+	path = external/qmm2
+	url = https://github.com/thecybermind/qmm2
+[submodule "external/qmm_sdks"]
+	path = external/qmm_sdks
+	url = https://github.com/thecybermind/qmm_sdks
+[submodule "external/LANCommander.Interposer"]
+	path = external/LANCommander.Interposer
+	url = https://github.com/LANCommander/LANCommander.Interposer

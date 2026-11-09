@@ -1,0 +1,6 @@
+{
+  "game": "auto",
+  "mod": "auto",
+  "plugins": [ "qmmaddons/lancommander/lancommander_qmm_x86_64_Q3A.dll" ],
+  "loglevel": "INFO"
+}

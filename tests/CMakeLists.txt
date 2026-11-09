@@ -1,0 +1,6 @@
+foreach(name IN ITEMS payload text logparse standings stats)
+    add_executable(lc_${name}_tests ${name}_tests.cpp)
+    target_link_libraries(lc_${name}_tests PRIVATE lc_core)
+    set_target_properties(lc_${name}_tests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME ${name} COMMAND lc_${name}_tests)
+endforeach()
