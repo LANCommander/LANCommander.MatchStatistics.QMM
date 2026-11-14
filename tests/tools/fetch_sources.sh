@@ -33,5 +33,8 @@ clone jk2mp   https://github.com/zachlatta/jedi-outcast      '/CODE-mp/game/*'
 clone jamp    https://github.com/grayj/Jedi-Academy          '/codemp/game/*'
 # Raven's Elite Force Holomatch game code, as lilium-voyager carries it.
 clone stvoyhm https://github.com/clover-moe/lilium-voyager   '/code/game/*'
+# The engines LANCommander's images run, for check_formats.py's VARIANTS.
+clone openjk   https://github.com/JACoders/OpenJK            '/codemp/game/*'
+clone etlegacy https://github.com/etlegacy/etlegacy          '/src/game/*'
 # OpenMoHAA's reimplementation: MOHAA's own game code was never released.
 clone mohaa   https://github.com/openmoh/openmohaa           '/code/fgame/*'

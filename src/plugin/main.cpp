@@ -50,6 +50,19 @@ namespace
 
 bool g_active = false;
 
+#if defined(LC_LOG_FROM_FILE)
+// The mod's g_log file (sdk.h): the handle it was given, and while it is being
+// opened, where the engine writes that handle.
+int  g_logFile        = 0;
+int* g_logFileOpening = nullptr;
+
+bool IsLogFile(const char* path)
+{
+    const char* log = QMM_GETSTRCVAR("g_log");
+    return path && log && *log && lc::ToLower(path) == lc::ToLower(log);
+}
+#endif
+
 lc::Stats& Core()
 {
     static lc::Stats stats(lc::TheGame(), lc::InterposerReporter());
@@ -268,10 +281,33 @@ C_DLLEXPORT intptr_t QMM_syscall(result_vars* results, intptr_t cmd, intptr_t* a
         g_clientsize = args[4];
     }
 
-#if defined(LC_FAMILY_Q3)
+#if defined(LC_LOG_FROM_FILE)
+    // The log lines, as the mod writes them to g_log's file (sdk.h). The mod
+    // opens it in its GAME_INIT, which QMM passes on after loading plugins.
+    else if (cmd == G_FS_FOPEN_FILE && g_active && args[1] && IsLogFile(reinterpret_cast<const char*>(args[0])))
+        g_logFileOpening = reinterpret_cast<int*>(args[1]);
+    else if (cmd == G_FS_WRITE && g_active && g_logFile > 0 && args[2] == g_logFile && args[0] && args[1] > 0)
+        Core().OnLogWrite(std::string_view(reinterpret_cast<const char*>(args[0]), static_cast<size_t>(args[1])));
+    else if (cmd == G_FS_FCLOSE_FILE && g_logFile > 0 && args[0] == g_logFile)
+        g_logFile = 0;
+#elif defined(LC_FAMILY_Q3)
     // G_LogPrintf's console echo (sdk.h): the log lines.
     else if (cmd == G_PRINT && g_active && args[0])
-        Core().OnPrint(reinterpret_cast<const char*>(args[0]));
+    {
+        const char* text = reinterpret_cast<const char*>(args[0]);
+
+#if defined(GAME_JAMP)
+        // OpenJK's GetModuleAPI mods call Print(fmt, ...); its G_LogPrintf echo
+        // is Print("%s", line). Our fork's QMM2 formats that before dispatching
+        // (fix/openjk-print-format), so text is the real line. This keeps the
+        // plugin working on an older QMM2 that still passes it on unformatted.
+        if (std::strcmp(text, "%s") == 0)
+            text = reinterpret_cast<const char*>(args[1]);
+#endif
+
+        if (text)
+            Core().OnPrint(text);
+    }
 #endif
 
     QMM_RET_IGNORED(0);
@@ -279,6 +315,14 @@ C_DLLEXPORT intptr_t QMM_syscall(result_vars* results, intptr_t cmd, intptr_t* a
 
 C_DLLEXPORT intptr_t QMM_syscall_Post(result_vars* results, intptr_t cmd, intptr_t* /*args*/)
 {
+#if defined(LC_LOG_FROM_FILE)
+    if (cmd == G_FS_FOPEN_FILE && g_logFileOpening)
+    {
+        g_logFile        = *g_logFileOpening;
+        g_logFileOpening = nullptr;
+    }
+#endif
+
 #if defined(LC_HAS_BOTLIB)
     // The mod adds a bot by calling its own ClientConnect, which QMM never
     // sees; the slot the engine allocates for it is the one sign (sdk.h).

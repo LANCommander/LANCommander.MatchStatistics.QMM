@@ -71,6 +71,11 @@ public:
     // Every G_PRINT: the log lines among them.
     void OnPrint(std::string_view text);
 
+    // What the game writes to its log file (g_log), for games whose
+    // G_LogPrintf does not echo to the console (Call of Duty): split into
+    // lines, each without its "%3i:%02i " timestamp, and read as OnPrint.
+    void OnLogWrite(std::string_view data);
+
     // ── For the game modules ────────────────────────────────────────────────
 
     const Settings& GetSettings() const { return m_settings; }
@@ -94,6 +99,12 @@ public:
 
     void AddStat(int client, const std::string& name, double delta);
     void AddTeamStat(const std::string& team, const std::string& name, double delta);
+
+    // A kill the module read from its own log lines, as a "Kill:" line would
+    // report it: client numbers, the attacker Game::WorldEntity() or -1 for
+    // none, the weapon as the game names it.
+    // extra: the game's own details, added to the event's payload.
+    void ReportKill(int attacker, int victim, const std::string& weapon, const Payload* extra = nullptr);
 
     // Adds "<prefix>_position" when positions are recorded and readable.
     void AddPosition(Payload& payload, const char* prefix, int client);
@@ -135,7 +146,7 @@ private:
     void Poll();
     void PollClient(int client);
     void PairKillsAndDeaths(const std::vector<std::pair<int, int>>& kills, const std::vector<std::pair<int, int>>& deaths);
-    void HandleKill(int attacker, int victim, const std::string& weapon);
+    void HandleKill(int attacker, int victim, const std::string& weapon, Payload payload = Payload());
     void JoinMatch(int client);
     void LeaveMatch(int client);
     void AddTimePlayed(int client);
@@ -172,6 +183,10 @@ private:
     bool        m_warmup = false;
     bool        m_intermission = false;
     int         m_round = 0;
+    bool        m_nextRound = false;    // shut down for a restart that is the next round
+    bool        m_roundRestart = false; // that restart, until its first frame
+
+    std::string m_logPending;   // OnLogWrite's text after the last newline
 
     long long   m_levelTimeMs = -1;
     std::chrono::steady_clock::time_point m_epoch = std::chrono::steady_clock::now();

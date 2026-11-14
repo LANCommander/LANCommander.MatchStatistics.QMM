@@ -4,9 +4,14 @@ The core and the modules read lines the games write with G_LogPrintf (see
 src/core/logparse.h). This checks, for every game with a module:
 
   1. that its G_LogPrintf echoes each line to the console (G_Printf when
-     g_dedicated), which is how the lines reach the plugin (a G_PRINT syscall);
+     g_dedicated, or OpenJK's trap->Print("%s", ...), which src/plugin/main.cpp
+     unwraps), which is how the lines reach the plugin (a G_PRINT syscall);
   2. that every format the plugin parses for it is one the game writes,
-     exactly.
+     exactly. A tuple is a line the game builds in pieces (OpenJK's Kill:
+     line, Com_sprintf'd then logged with "%s"): every piece must be there.
+
+Each module is checked against the game's original code and against the
+engines LANCommander's server images run (OpenJK, ET: Legacy).
 
 The sources come from tests/tools/fetch_sources.sh (out/sources/<game>/).
 Run with: python -I tests/tools/check_formats.py   (exit code = problems)
@@ -43,13 +48,39 @@ MODULES = {
     "stvoyhm": CORE,
 }
 
+# The same lines as the engines LANCommander's images run write them, by
+# source directory: (the module, the formats). The parser reads each variant:
+# names with colour codes, an objective's name after the numbers LeadingInts
+# reads, and a second "Exit: ... (already triggered)" that Stats::GameOver
+# ignores.
+VARIANTS = {
+    "openjk": ("jamp", [
+        ("Kill: %i %i %i: %s killed ", "%s by %s\\n"),
+        "Exit: %s\\n",
+        "Item: %i %s\\n",
+    ]),
+    "etlegacy": ("wet", [
+        "Kill: %i %i %i: ^7%s^7 killed %s^7 by %s\\n",
+        "Exit: %s\\n",
+        "Item: %i %s\\n",
+        "Medic_Revive: %d %d\\n",
+        "Dynamite_Plant: %d %s\\n",
+        "Dynamite_Diffuse: %d %s\\n",
+        "Repair: %d\\n",
+        "Health_Pack: %d %d\\n",
+        "Ammo_Pack: %d %d\\n",
+    ]),
+}
+
 # The tags src/games/wet.cpp lists, which must match the formats above.
 MODULE_SOURCES = {
     "wet": (ROOT / "src" / "games" / "wet.cpp", re.compile(r'\{\s*"(\w+)",\s*"\w+",\s*"\w+"\s*\}')),
 }
 
 LOG_PRINTF = re.compile(r'G_LogPrintf\s*\(\s*"((?:[^"\\]|\\.)*)"')
-ECHO = re.compile(r"if\s*\(\s*g_dedicated\.integer\s*\)\s*\{?\s*G_Printf\s*\(", re.S)
+# Every string literal, for the lines built in pieces.
+LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
+ECHO = re.compile(r"if\s*\(\s*(?:g_)?dedicated\.integer\s*\)\s*\{?\s*(?:G_Printf|trap->Print)\s*\(", re.S)
 
 
 def game_files(game):
@@ -63,20 +94,26 @@ def main():
         print(f"No game sources in {SOURCES}: run tests/tools/fetch_sources.sh first")
         return 1
 
-    for game, formats in MODULES.items():
-        files = game_files(game)
+    checks = [(game, game, formats) for game, formats in MODULES.items()]
+    checks += [(source, module, formats) for source, (module, formats) in VARIANTS.items()]
+
+    for source, module, formats in checks:
+        files = game_files(source)
+        label = source if source == module else f"{source} ({module})"
 
         if not files:
-            print(f"{game}: no sources (run tests/tools/fetch_sources.sh)")
+            print(f"{label}: no sources (run tests/tools/fetch_sources.sh)")
             problems += 1
             continue
 
         written = set()
+        literals = set()
         echoes = False
 
         for path in files:
             text = path.read_text(encoding="latin-1")
             written.update(LOG_PRINTF.findall(text))
+            literals.update(LITERAL.findall(text))
 
             # The body of G_LogPrintf itself.
             match = re.search(r"void\s+QDECL\s+G_LogPrintf\s*\([^)]*\)\s*\{(.*?)\n\}", text, re.S)
@@ -84,16 +121,19 @@ def main():
                 echoes = True
 
         if echoes:
-            print(f"ok    {game}: G_LogPrintf echoes to the console")
+            print(f"ok    {label}: G_LogPrintf echoes to the console")
         else:
-            print(f"FAIL  {game}: G_LogPrintf does not echo to the console under g_dedicated")
+            print(f"FAIL  {label}: G_LogPrintf does not echo to the console under g_dedicated")
             problems += 1
 
         for fmt in formats:
-            if fmt in written:
-                print(f"ok    {game}: {fmt}")
+            found = all(piece in literals for piece in fmt) if isinstance(fmt, tuple) else fmt in written
+            shown = " + ".join(fmt) if isinstance(fmt, tuple) else fmt
+
+            if found:
+                print(f"ok    {label}: {shown}")
             else:
-                print(f"FAIL  {game}: never writes {fmt}")
+                print(f"FAIL  {label}: never writes {shown}")
                 problems += 1
 
     for game, (path, pattern) in MODULE_SOURCES.items():

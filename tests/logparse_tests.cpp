@@ -32,6 +32,26 @@ int main()
         Check(line && line->attacker == 12 && line->victim == 5, "two-digit client numbers");
     }
     {
+        // ET: Legacy colours the names: "Kill: %i %i %i: ^7%s^7 killed %s^7 by %s".
+        const auto line = ParseLogLine("Kill: 3 5 9: ^7^1Pat^7 killed Bob^7 by MOD_THOMPSON\n");
+        Check(line && line->kind == LogKind::Kill && line->attacker == 3 && line->weapon == "MOD_THOMPSON",
+              "ET: Legacy's coloured Kill line");
+    }
+    {
+        // ET: Legacy names the objective: "Dynamite_Plant: %d %s".
+        const auto line = ParseLogLine("Dynamite_Plant: 4 the Main Gate");
+        Check(line && LeadingInts(line->rest) == std::vector<int>{ 4 }, "ET: Legacy's Dynamite_Plant");
+    }
+    {
+        CheckEq(std::string(StripLogTimestamp("  0:58 J;0;0;Pat")), "J;0;0;Pat", "a log file timestamp");
+        CheckEq(std::string(StripLogTimestamp("123:05 K;a")), "K;a", "a three-digit minute");
+        CheckEq(std::string(StripLogTimestamp("Kill: 1 2 3: a killed b by MOD_X")), "Kill: 1 2 3: a killed b by MOD_X",
+                "no timestamp: unchanged");
+        CheckEq(std::string(StripLogTimestamp("  0:5 x")), "  0:5 x", "one digit of seconds is no timestamp");
+        const auto fields = SplitFields("W;;guid;name", ';');
+        Check(fields.size() == 4 && fields[1].empty() && fields[3] == "name", "fields, empty ones kept");
+    }
+    {
         const auto line = ParseLogLine("Kill: x 3 10: broken");
         Check(line && line->kind == LogKind::Other, "a malformed Kill line is not a kill");
     }

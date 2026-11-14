@@ -1,6 +1,7 @@
 [submodule "external/qmm2"]
 	path = external/qmm2
-	url = https://github.com/thecybermind/qmm2
+	url = https://github.com/LANCommander/qmm2.git
+	branch = lancommander
 [submodule "external/qmm_sdks"]
 	path = external/qmm_sdks
 	url = https://github.com/thecybermind/qmm_sdks

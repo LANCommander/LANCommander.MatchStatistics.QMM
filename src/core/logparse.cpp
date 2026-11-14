@@ -132,6 +132,46 @@ std::optional<LogLine> ParseLogLine(std::string_view text)
     return line;
 }
 
+std::string_view StripLogTimestamp(std::string_view line)
+{
+    size_t pos = 0;
+
+    while (pos < line.size() && line[pos] == ' ')
+        ++pos;
+
+    const size_t minutes = pos;
+
+    while (pos < line.size() && std::isdigit(static_cast<unsigned char>(line[pos])))
+        ++pos;
+
+    if (pos == minutes || pos + 4 > line.size() || line[pos] != ':' ||
+        !std::isdigit(static_cast<unsigned char>(line[pos + 1])) ||
+        !std::isdigit(static_cast<unsigned char>(line[pos + 2])) || line[pos + 3] != ' ')
+        return line;
+
+    return line.substr(pos + 4);
+}
+
+std::vector<std::string_view> SplitFields(std::string_view text, char sep)
+{
+    std::vector<std::string_view> fields;
+    size_t start = 0;
+
+    while (true)
+    {
+        const size_t end = text.find(sep, start);
+
+        if (end == std::string_view::npos)
+        {
+            fields.push_back(text.substr(start));
+            return fields;
+        }
+
+        fields.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+}
+
 std::vector<int> LeadingInts(std::string_view text)
 {
     std::vector<int> values;

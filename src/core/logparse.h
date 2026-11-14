@@ -59,6 +59,13 @@ struct LogLine
 // message cannot smuggle a "Kill:" line in that way).
 std::optional<LogLine> ParseLogLine(std::string_view text);
 
+// A log file line without the timestamp G_LogPrintf puts before it ("%3i:%02i ",
+// minutes and seconds: "  0:58 J;..."). Text without one comes back as it is.
+std::string_view StripLogTimestamp(std::string_view line);
+
+// text split at every sep: "K;a;;b" -> {"K", "a", "", "b"}.
+std::vector<std::string_view> SplitFields(std::string_view text, char sep);
+
 // The whole numbers at the start of text, separated by spaces: "3 7" -> {3, 7}.
 // For lines like "Medic_Revive: %d %d". Stops at the first non-number.
 std::vector<int> LeadingInts(std::string_view text);

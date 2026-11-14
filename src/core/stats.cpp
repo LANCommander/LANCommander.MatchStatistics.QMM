@@ -124,25 +124,43 @@ void Stats::OnInit(bool restart)
 
     ReadSettings(true);
 
-    ResetPlayers();
-
     // A new map, or the same one restarted: a new game either way (Q3 restarts
-    // the map after the intermission when there is no nextmap).
-    (void)restart;
-    m_doneThisMap = false;
+    // the map after the intermission when there is no nextmap). Except where
+    // the restart is the next round (Game::RestartIsNextRound): the match, its
+    // players and its round go on.
+    const bool nextRound = m_nextRound && restart && m_match;
+    m_nextRound = false;
+
+    if (!nextRound && m_match)
+        EndMatch("map_change", false);
+
+    m_roundRestart = nextRound;
+
+    if (!nextRound)
+    {
+        ResetPlayers();
+        m_doneThisMap = false;
+        m_round = 0;
+    }
 
     m_levelTimeMs     = -1;
     m_warmup          = false;
     m_intermission    = false;
     m_gameOverPending = false;
     m_gameOverMessage.clear();
-    m_round = 0;
+    m_logPending.clear();
 }
 
 void Stats::OnShutdown(bool restart)
 {
     if (m_gameOverPending)
         OnFrame(m_levelTimeMs);
+
+    if (m_match && restart && m_game.RestartIsNextRound())
+    {
+        m_nextRound = true;
+        return;
+    }
 
     // A map_restart in the middle of play throws the match away; a map change
     // (or the server quitting) ends it as it stands. Without a game over of its
@@ -153,7 +171,8 @@ void Stats::OnShutdown(bool restart)
 
 void Stats::OnFrame(long long levelTimeMs)
 {
-    m_levelTimeMs = levelTimeMs;
+    m_levelTimeMs  = levelTimeMs;
+    m_roundRestart = false;
 
     ReadSettings(false);
 
@@ -423,6 +442,11 @@ void Stats::GameOver(const std::string& message)
     if (!m_match)
         return;
 
+    // The first reason stands: ET: Legacy logs "Exit: <reason> (already
+    // triggered)" if the exit fires again before the match ends.
+    if (m_gameOverPending && !m_gameOverMessage.empty())
+        return;
+
     m_gameOverPending = true;
     m_gameOverMessage = message;
 }
@@ -517,6 +541,10 @@ std::string Stats::BuildKey(int client, const std::string& userinfo) const
 void Stats::OnClientConnect(int client, bool bot)
 {
     if (client < 0 || client >= kMaxClients)
+        return;
+
+    // The restart for the next round connects everyone again: still playing.
+    if (m_roundRestart && m_players[client].connected)
         return;
 
     // A connect on a slot still in use (a missed disconnect): the old one left.
@@ -780,7 +808,7 @@ void Stats::AddPosition(Payload& payload, const char* prefix, int client)
         "[" + JsonNumber(state.origin[0]) + "," + JsonNumber(state.origin[1]) + "," + JsonNumber(state.origin[2]) + "]");
 }
 
-void Stats::HandleKill(int attacker, int victim, const std::string& weapon)
+void Stats::HandleKill(int attacker, int victim, const std::string& weapon, Payload payload)
 {
     // An NPC's death (Jedi Academy logs those too).
     if (!IsPlayer(victim))
@@ -790,8 +818,6 @@ void Stats::HandleKill(int attacker, int victim, const std::string& weapon)
     const bool suicide  = !attackerIsPlayer || attacker == victim;
     const bool teamkill = !suicide && m_players[attacker].team >= 0 && m_players[attacker].team == m_players[victim].team &&
         !ReportedTeam(victim).empty() && !m_game.PlayingTeams().empty();
-
-    Payload payload;
 
     if (!weapon.empty())
         payload.Set("weapon", JsonString(WeaponName(weapon)));
@@ -873,6 +899,9 @@ void Stats::PairKillsAndDeaths(const std::vector<std::pair<int, int>>& kills,
 
 void Stats::OnPrint(std::string_view text)
 {
+    if (m_game.OnRawLogLine(*this, text.substr(0, text.find_first_of("\r\n"))))
+        return;
+
     const std::optional<LogLine> line = ParseLogLine(text);
 
     if (!line)
@@ -903,6 +932,39 @@ void Stats::OnPrint(std::string_view text)
     }
 
     m_game.OnLogLine(*this, *line);
+}
+
+void Stats::OnLogWrite(std::string_view data)
+{
+    // One G_LogPrintf is one write of whole lines, but nothing promises it.
+    constexpr size_t kMaxPending = 4096;
+
+    m_logPending.append(data.data(), data.size());
+
+    size_t start = 0;
+    size_t newline;
+
+    while ((newline = m_logPending.find('\n', start)) != std::string::npos)
+    {
+        std::string_view line(m_logPending.data() + start, newline - start);
+
+        if (!line.empty() && line.back() == '\r')
+            line.remove_suffix(1);
+
+        OnPrint(StripLogTimestamp(line));
+        start = newline + 1;
+    }
+
+    m_logPending.erase(0, start);
+
+    if (m_logPending.size() > kMaxPending)
+        m_logPending.clear();
+}
+
+void Stats::ReportKill(int attacker, int victim, const std::string& weapon, const Payload* extra)
+{
+    if (Recording())
+        HandleKill(attacker, victim, weapon, extra ? *extra : Payload());
 }
 
 // ── What is kept with the match ──────────────────────────────────────────────

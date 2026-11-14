@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lc
@@ -73,6 +74,10 @@ public:
     virtual bool TeamScore(int /*team*/, int& /*score*/) { return false; }
 
     virtual bool InWarmup() { return false; }
+
+    // A map_restart now only starts the next round, and the match goes on
+    // (Call of Duty's round-based gametypes restart the map for every round).
+    virtual bool RestartIsNextRound() { return false; }
     virtual bool InIntermission() { return false; }
 
     // The game writes "Kill:" lines (G_LogPrintf). When false, the core pairs
@@ -84,6 +89,10 @@ public:
     virtual int WorldEntity() const { return -1; }
 
     // ── Hooks for the module's own events ───────────────────────────────────
+
+    // Every log line, before the core reads it as a "Tag: ..." line. True when
+    // the module has taken it (Call of Duty's "K;..." lines).
+    virtual bool OnRawLogLine(Stats& /*stats*/, std::string_view /*line*/) { return false; }
 
     // Every tagged console line, after the core has handled the common ones.
     virtual void OnLogLine(Stats& /*stats*/, const LogLine& /*line*/) {}

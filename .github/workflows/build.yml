@@ -85,6 +85,82 @@ jobs:
           name: ${{ matrix.preset }}
           path: out/${{ matrix.preset }}/bin/Release/lancommander_qmm_*.so
 
+  # QMM2 for Linux, from the pinned submodule (LANCommander/qmm2's lancommander
+  # branch: upstream main with our fixes merged until they are upstream), in the
+  # same Debian 12 image: QMM2's own release needs glibc 2.38 (__isoc23_strtol,
+  # GLIBCXX_3.4.32).
+  qmm2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build image
+        run: docker build -f external/LANCommander.Interposer/docker/build.Dockerfile -t build external/LANCommander.Interposer/docker
+
+      - name: Build
+        run: docker run --rm -v "$PWD:/src" -w /src/external/qmm2 build sh -c 'make -j"$(nproc)" release32 release64'
+
+      # Debian 12 has glibc 2.36: nothing newer may be needed.
+      - name: Check symbol versions
+        run: |
+          status=0
+          for so in external/qmm2/bin/release/x86/qmm2.so external/qmm2/bin/release/x86_64/qmm2_x86_64.so; do
+            newer=$(objdump -T "$so" | grep -oE '(GLIBC_2\.(3[7-9]|[4-9][0-9])|GLIBCXX_3\.4\.(3[1-9]))' | sort -u || true)
+            if [ -n "$newer" ]; then echo "$so needs:"; echo "$newer"; status=1; fi
+          done
+          exit $status
+
+      - name: Collect
+        run: |
+          mkdir -p qmm2
+          cp external/qmm2/bin/release/x86/qmm2.so external/qmm2/bin/release/x86_64/qmm2_x86_64.so qmm2/
+          cp external/qmm2/LICENSE qmm2/LICENSE.qmm2
+          echo "QMM2 $(git -C external/qmm2 describe --tags --always) (LANCommander/qmm2 lancommander), built on Debian 12" > qmm2/VERSION.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qmm2-linux
+          path: qmm2/
+
+  # QMM2 for Windows, from the same pinned submodule, with the MSVC project it
+  # ships (msvc/qmm2.vcxproj -> bin/Release/{x86,x64}/qmm2*.dll). Windows servers
+  # get the console fix (and the vmMain-field fix the CoD module needs) this way,
+  # rather than waiting for our fixes to reach an upstream QMM2 release.
+  qmm2-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # qmm2.vcxproj includes ../../qmm_sdks: the recursively-checked-out
+      # external/qmm_sdks submodule. Nothing else is needed to configure it.
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        working-directory: external/qmm2
+        run: |
+          msbuild msvc/qmm2.vcxproj /p:Configuration=Release /p:Platform=x86 /v:minimal /nologo
+          msbuild msvc/qmm2.vcxproj /p:Configuration=Release /p:Platform=x64 /v:minimal /nologo
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force qmm2 | Out-Null
+          Copy-Item external/qmm2/bin/Release/x86/qmm2.dll        qmm2/
+          Copy-Item external/qmm2/bin/Release/x64/qmm2_x86_64.dll qmm2/
+          Copy-Item external/qmm2/LICENSE qmm2/LICENSE.qmm2
+          "QMM2 $(git -C external/qmm2 describe --tags --always) (LANCommander/qmm2 lancommander), MSVC Release" |
+            Out-File -Encoding utf8 qmm2/VERSION.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qmm2-windows
+          path: qmm2/
+
   # The log formats the plugin parses, against the games' released code.
   formats:
     runs-on: ubuntu-latest
@@ -98,7 +174,7 @@ jobs:
         run: python3 -I tests/tools/check_formats.py
 
   package:
-    needs: [windows, linux, formats]
+    needs: [windows, linux, qmm2, qmm2-windows, formats]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # the release, on a v* tag

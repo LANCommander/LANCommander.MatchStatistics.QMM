@@ -18,6 +18,10 @@
 // LC_HAS_BOTLIB marks the games with Q3's botlib (G_BOT_ALLOCATE_CLIENT),
 // whose mods connect bots themselves, out of QMM's sight (main.cpp).
 //
+// LC_LOG_FROM_FILE marks the games whose G_LogPrintf writes only to the log
+// file (Call of Duty: a dedicated 1.5 server echoes nothing to the console).
+// The plugin reads the lines from the mod's G_FS_WRITE calls on g_log's file.
+//
 // Single-player games (JASP, JK2SP, RTCWSP, SOF2SP, STVOYSP) are not built:
 // a match there means nothing to LANCommander.
 
@@ -31,18 +35,21 @@
     #include <cod11mp/game/g_public.h>
     #include <game_cod11mp.h>
     #define LC_FAMILY_Q3
+    #define LC_LOG_FROM_FILE
 #elif defined(GAME_CODMP)
     #include <codmp/bgame/bg_local.h>
     #include <codmp/bgame/bg_public.h>
     #include <codmp/game/g_public.h>
     #include <game_codmp.h>
     #define LC_FAMILY_Q3
+    #define LC_LOG_FROM_FILE
 #elif defined(GAME_CODUOMP)
     #include <coduomp/bgame/bg_local.h>
     #include <coduomp/bgame/bg_public.h>
     #include <coduomp/game/g_public.h>
     #include <game_coduomp.h>
     #define LC_FAMILY_Q3
+    #define LC_LOG_FROM_FILE
 #elif defined(GAME_JAMP)
     #include <jamp/game/g_local.h>
     #include <game_jamp.h>

@@ -21,13 +21,14 @@ which is built into the plugin.
 | Game | QMM code | What is recorded |
 |---|---|---|
 | **Quake III Arena** / Team Arena | `Q3A` | Kills (weapon, suicides, world deaths, team kills), scores, team scores and standings. Flag captures, assists, defends, medals (impressive, excellent, humiliation), item pickups (optional). |
-| **Wolfenstein: Enemy Territory** | `WET` | Kills, scores and the map's winner, Axis against Allies. Revives, dynamite plants and defuses, MG42 repairs, health and ammo packs handed out. |
+| **Wolfenstein: Enemy Territory** (and ET: Legacy) | `WET` | Kills, scores and the map's winner, Axis against Allies. Revives, dynamite plants and defuses, MG42 repairs, health and ammo packs handed out. |
 | **Return to Castle Wolfenstein** (MP) | `RTCWMP` | Kills, scores, the map's winner. |
 | **Jedi Knight II: Jedi Outcast** (MP) | `JK2MP` | As Quake III: kills, scores, team scores, captures, assists, defends, medals. |
-| **Jedi Knight: Jedi Academy** (MP) | `JAMP` | As Quake III. NPC deaths are left out. |
-| **Star Trek: Voyager Elite Force** (Holomatch) | `STVOYHM` | Kills, scores, team scores, medals. |
+| **Jedi Knight: Jedi Academy** (MP, and OpenJK) | `JAMP` | As Quake III. NPC deaths are left out. |
+| **Star Trek: Voyager Elite Force** (Holomatch) | `STVOYHM` | Kills, scores, team scores, medals. 32- and 64-bit (ioEF-cMod). |
+| **Call of Duty** (1.5) and **United Offensive** (MP) | `CODMP`, `CODUOMP` | Kills (weapon, means of death, hit location, headshots, world deaths, team kills), scores, rounds and round winners. Bomb plants and defuses, flag pickups, captures, returns and defends, objective captures. Teams are learnt from the kill and damage lines, so a player who never hit or was hit has none. |
 | **Medal of Honor: Allied Assault** | `MOHAA` | Kills and deaths, and kill events where one killer and one victim can be paired (the game logs no kills). Teams. Players are ranked by kills. |
-| Every other QMM multiplayer game: CoD, CoD:UO, CoD 1.1, SoF2, MOH:SH, MOH:BT, Elite Force II, Quake II, Quake II Remastered, SiN, SoF, Kingpin | | The match, the players joining, leaving and renaming, and chat. No kills or standings. |
+| Every other QMM multiplayer game: CoD 1.1, SoF2, MOH:SH, MOH:BT, Elite Force II, Quake II, Quake II Remastered, SiN, SoF, Kingpin | | The match, the players joining, leaving and renaming, and chat. No kills or standings. |
 
 QMM2's single-player games are not supported, because a match there means nothing to LANCommander.
 
@@ -73,8 +74,17 @@ been run on a server yet.
 **Linux servers can only use `http://`.** The Interposer's Linux HTTP client has no TLS.
 LANCommander on a LAN is normally plain HTTP.
 
-**Linux needs glibc 2.36 or newer** (Debian 12, Ubuntu 22.10 or later, and LANCommander's own game
-server images).
+**The release carries QMM2 itself**, for both Linux (`qmm2/linux/`) and Windows (`qmm2/windows/`),
+built from [LANCommander/qmm2](https://github.com/LANCommander/qmm2)'s `lancommander` branch: upstream
+QMM2 with fixes not yet in an upstream release (garbled console output on Linux; OpenJK log lines
+reaching plugins as `"%s"`; a public-API field the Call of Duty module needs). Use these if you want
+the fixes before upstream ships them. The Linux build is made on Debian 12 because QMM2's own release
+needs glibc 2.38, while **Linux servers need only glibc 2.36 or newer** (Debian 12, Ubuntu 22.10 or
+later, and LANCommander's own game server images).
+
+**Call of Duty** writes its log lines only to its log file, so the plugin reads them from there:
+leave `g_log` set (its default is `games_mp.log`). Round-based gametypes (sd, re, and UO's ctf, dom
+and bas) are one match across their rounds; it ends with the map.
 
 ## Configuration
 
@@ -237,7 +247,11 @@ docker run --rm -v "$PWD:/src" -w /src lancommander-interposer-build sh -c '
 - **Checking the log formats against the games' code.** `tests/tools/fetch_sources.sh` fetches the
   released game code of every game with a module. Then `python -I tests/tools/check_formats.py`
   checks two things: that each game echoes its log to the console, and that every line the plugin
-  parses is one that game writes.
+  parses is one that game writes. It also checks OpenJK and ET: Legacy, the engines LANCommander's
+  server images run.
+- **Call of Duty's formats** are in its gametype scripts, which ship only in the game's pk3 files:
+  `python -I tests/tools/check_cod_formats.py "<Call of Duty directory>"` reads them from an
+  installed game (1.5 and United Offensive) and checks them against `src/games/cod.cpp`.
 - **End to end.** `tests/e2e/fake_lancommander.py` stands in for LANCommander and logs every
   request; `summarize.py` reports on them.
 

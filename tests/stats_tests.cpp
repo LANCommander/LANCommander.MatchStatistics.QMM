@@ -26,7 +26,9 @@ struct FakeGame : Game
     std::map<int, int> teamScores;
     bool logsKills = true;
     bool warmup = false;
+    bool nextRound = false;
     std::vector<std::string> printed;
+    std::vector<std::string> rawLines;  // what OnRawLogLine took (lines starting "X;")
 
     const char* Code() const override { return "Q3A"; }
     std::string Cvar(const char* name) override { auto it = cvars.find(name); return it == cvars.end() ? "" : it->second; }
@@ -51,6 +53,15 @@ struct FakeGame : Game
     bool InWarmup() override { return warmup; }
     bool LogsKills() const override { return logsKills; }
     int  WorldEntity() const override { return 1022; }
+    bool RestartIsNextRound() override { return nextRound; }
+
+    bool OnRawLogLine(Stats&, std::string_view line) override
+    {
+        if (line.size() < 2 || line[1] != ';')
+            return false;
+        rawLines.emplace_back(line);
+        return true;
+    }
 };
 
 struct Call
@@ -193,6 +204,7 @@ int main()
         // The deciding frag, in the same frame as the exit, after the last poll.
         game.clients[0].score = 13;
         stats.OnPrint("Exit: Fraglimit hit.\n");
+        stats.OnPrint("Exit: Fraglimit hit. (already triggered)\n");
         CheckEq(reporter.Count("end"), 0, "the end waits for the next frame");
         stats.OnFrame(2050);
         CheckEq(static_cast<long long>(reporter.Last("set:score") ? 0 : -1), 0, "scores are set at the end");
@@ -203,6 +215,9 @@ int main()
                 CheckEq(static_cast<long long>(call.result.score), 13, "the final score is read at the end, not a frame late");
         }
         CheckEq(reporter.Count("event:game_end"), 1, "a game_end event");
+        const Call* gameEnd = reporter.Last("event:game_end");
+        Check(gameEnd && gameEnd->c.find("\"Fraglimit hit.\"") != std::string::npos,
+              "the first Exit line's reason is kept, not ET: Legacy's \"(already triggered)\" repeat");
         const Call* end = reporter.Last("end");
         Check(end && end->a == "game_over" && end->b.empty(), "the match ends as game_over, not abandoned");
         CheckEq(reporter.Count("result"), 3, "a result per player");
@@ -376,6 +391,85 @@ int main()
         stats.OnFrame(40);
         CheckEq(reporter.Count("event:kill"), 2, "two kills and two deaths at once are not guessed at");
         CheckEq(static_cast<long long>(reporter.Sum("add:deaths", "name:B")), 3, "but they count");
+    }
+
+    // ── Call of Duty: the log file's writes, kills from the module, rounds ──
+    {
+        FakeGame game;
+        game.nextRound = true;
+        FakeReporter reporter;
+        Stats stats(game, reporter);
+
+        stats.OnInit(false);
+        Connect(stats, game, 0, "Pat");
+        Connect(stats, game, 1, "Bob");
+        stats.OnFrame(10);
+        CheckEq(reporter.Count("start"), 1, "the match starts");
+
+        // Two lines in one write, then one split over two, each with its timestamp.
+        stats.OnLogWrite("  0:05 J;0;0;Pat\n  0:06 K;;1;axis;Bob;;0;allies;Pat;kar98k_mp;135;MOD_HEAD_SHOT;head\n");
+        stats.OnLogWrite(" 12:07 W;al");
+        CheckEq(static_cast<long long>(game.rawLines.size()), 2, "whole lines only");
+        stats.OnLogWrite("lies\r\n");
+        CheckEq(static_cast<long long>(game.rawLines.size()), 3, "a line split over two writes is read once, whole");
+        CheckEq(game.rawLines[0], "J;0;0;Pat", "the timestamp is dropped");
+        CheckEq(game.rawLines[2], "W;allies", "and the carriage return");
+
+        stats.OnLogWrite("  0:07 Exit: Timelimit hit.\n");
+        CheckEq(reporter.Count("event:game_end"), 0, "tagged lines still reach the core");
+        stats.OnFrame(20);
+        CheckEq(reporter.Count("event:game_end"), 1, "the Exit line from the file ends the game");
+
+        stats.OnShutdown(false);
+        stats.OnInit(false);
+        Connect(stats, game, 0, "Pat");
+        Connect(stats, game, 1, "Bob");
+        stats.OnFrame(10);
+        CheckEq(reporter.Count("start"), 2, "a new match on the next map");
+
+        Payload extra;
+        extra.Set("headshot", "true");
+        stats.ReportKill(0, 1, "kar98k_mp", &extra);
+        const Call* kill = reporter.Last("event:kill");
+        Check(kill && kill->a == "name:Pat" && kill->b == "name:Bob" && kill->c.find("\"headshot\":true") != std::string::npos &&
+              kill->c.find("\"weapon\":\"kar98k_mp\"") != std::string::npos, "a module's kill carries its extras");
+        stats.ReportKill(1022, 1, "none");
+        kill = reporter.Last("event:kill");
+        Check(kill && kill->a.empty() && kill->c.find("\"world\":true") != std::string::npos, "a module's world kill");
+
+        // map_restart(true) for the next round: the match, its players and its round go on.
+        stats.SetRound(1);
+        const int leftBefore = reporter.Count("left");
+        stats.OnShutdown(true);
+        stats.OnInit(true);
+        stats.OnClientConnect(0, false);
+        stats.OnClientBegin(0);
+        stats.OnClientConnect(1, false);
+        stats.OnClientBegin(1);
+        stats.OnFrame(10);
+        CheckEq(reporter.Count("end"), 1, "the next round does not end the match");
+        CheckEq(reporter.Count("left"), leftBefore, "nobody leaves for it");
+        CheckEq(reporter.Count("event:disconnect"), 0, "nobody disconnects for it");
+        CheckEq(stats.CurrentRound(), 1, "the round number is kept");
+        CheckEq(reporter.Count("start"), 2, "and no new match starts");
+
+        // After the restart's first frame, a connect on a used slot is a new player again.
+        game.userinfo[1] = "\\name\\Joe";
+        stats.OnClientConnect(1, false);
+        CheckEq(reporter.Count("event:disconnect"), 1, "a missed disconnect after the restart is still one");
+
+        stats.OnShutdown(false);
+        const Call* end = reporter.Last("end");
+        Check(reporter.Count("end") == 2 && end && end->a == "map_change" && end->b.empty(), "the map's end ends it");
+
+        // Not the next round: a restart throws the match away, as before.
+        game.nextRound = false;
+        stats.OnInit(false);
+        Connect(stats, game, 0, "Pat");
+        stats.OnFrame(10);
+        stats.OnShutdown(true);
+        end = reporter.Last("end");
+        Check(end && end->a == "restarted" && end->b == "abandoned", "other restarts abandon the match");
     }
 
     std::printf("%d failure(s)\n", g_failures);

@@ -15,14 +15,17 @@ set_target_properties(lc_core PROPERTIES CXX_STANDARD 17 POSITION_INDEPENDENT_CO
 
 # The games, as stub_qmm's genbuild.py lists them, without the single-player
 # ones (JASP, JK2SP, RTCWSP, SOF2SP, STVOYSP). The module each one is built
-# with: its own in src/games/, or the generic layer.
+# with: its own in src/games/, or the generic layer. COD11MP stays generic: its
+# vmMain numbering differs from 1.5's, and no 1.1 server was at hand to check
+# GAME_GET_CLIENTSCORE against (src/games/cod.cpp).
 set(LC_GAMES
     Q3A:q3a RTCWMP:rtcwmp WET:wet JK2MP:jk2mp JAMP:jamp STVOYHM:stvoyhm MOHAA:mohaa
-    MOHSH:generic MOHBT:generic STEF2:generic SOF2MP:generic CODMP:generic CODUOMP:generic COD11MP:generic
+    MOHSH:generic MOHBT:generic STEF2:generic SOF2MP:generic CODMP:cod CODUOMP:cod COD11MP:generic
     QUAKE2:generic Q2R:generic SIN:generic SOF:generic KINGPIN:generic)
 
-# Which games have servers for which builds (genbuild.py's no_x64/no_x86/no_linux).
-set(LC_GAMES_X64 Q3A RTCWMP WET JK2MP JAMP QUAKE2 Q2R)
+# Which games have servers for which builds (genbuild.py's no_x64/no_x86/no_linux),
+# and STVOYHM for ioEF-cMod's 64-bit server, which QMM2 builds for but lists as untested.
+set(LC_GAMES_X64 Q3A RTCWMP WET JK2MP JAMP STVOYHM QUAKE2 Q2R)
 set(LC_GAMES_NO_X86 Q2R)
 set(LC_GAMES_NO_LINUX Q2R)
 
@@ -83,7 +86,9 @@ function(lc_add_game game module)
         # the dynamic symbol table QMM_* plus Interposer* (exports.map says why).
         target_link_options(${target} PRIVATE
             -static-libstdc++ -static-libgcc
-            "LINKER:--exclude-libs,ALL"
+            # Not ALL: that would hide the embedded Interposer's archive too, and a
+            # symbol --exclude-libs hides the version script cannot make global again.
+            "LINKER:--exclude-libs,libstdc++.a:libgcc.a:libgcc_eh.a:libyaml-cpp.a:libyaml-cppd.a"
             "LINKER:--no-undefined"
             "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/plugin/exports.map")
         set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/plugin/exports.map")
